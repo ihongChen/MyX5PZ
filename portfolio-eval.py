@@ -7,11 +7,13 @@ Created on Wed Jun 16 06:22:17 2021
 #%%
 import datetime 
 import pandas as pd 
+import os 
+import numpy as np 
 # import argparse
 # import ffn 
 #%%
 def convert_jd(jd:str):
-    '''convert julian date to datetime '''
+    '''轉換儒略日 '''
     if int(jd) == 0:
         return 
     try:
@@ -21,7 +23,7 @@ def convert_jd(jd:str):
         return 
     
 def parse_pl_file(filename):
-    ''' parse portfolio file into pandas dataframe
+    ''' 讀取x5績效表單(PL-*.txt)成資料表格式 (pd.dataframe)
     '''
     data = {}
     with open(filename,encoding='cp950') as f: 
@@ -61,7 +63,7 @@ def parse_pl_file(filename):
 
 
 def cal_profit(df,riskR=0.003):
-    '''calculate closed & open pnl 
+    '''calculate singel asset closed & open pnl 
     
         1) closed profit 
         2) open profit 
@@ -86,10 +88,36 @@ def cal_profit(df,riskR=0.003):
                     }) 
     df[sel_cols] = df[sel_cols].astype(float)
     df[sel_cols1] = df[sel_cols1].astype('datetime64[ns]')
+    df['riskR'] = riskR
     return df
 
+def cal_portfolio_profit(dfs):
+    '''
 
-#%%
+    Parameters
+    ----------
+    dfs : list of dataframe 
+        
+
+    Returns
+    -------
+    protfolio profit (with open pnl)
+
+    '''
+    _idx = np.argmax([len(df) for df in dfs])
+    closed_pnl = pd.Series(0,index=dfs[_idx].index)
+    open_pnl = closed_pnl.copy()
+    # closed_pnl = (dfs[0]['riskR']*dfs[0]['closed_pnl_byATR']).fillna(0)
+    # open_pnl = (dfs[0]['riskR']*dfs[0]['open_profit_byATR']).fillna(0)
+    for idx,df in enumerate(dfs):
+
+        closed_pnl += df['riskR']*df['closed_pnl_byATR'].fillna(0)
+        open_pnl += df['riskR']*df['open_profit_byATR'].fillna(0)
+    closed_pnl = closed_pnl.fillna(0)
+    open_pnl = open_pnl.fillna(0)
+    return (1+closed_pnl.cumsum() + open_pnl).ffill()
+    
+#%%1. 比較一種價格圖結果
 if __name__ == '__main__':
     
     filename = 'PL-3001_YM_1_60_1_0.txt'
@@ -97,19 +125,26 @@ if __name__ == '__main__':
     df = cal_profit(df, riskR=0.01)
     df.to_csv('portfolio-test.csv')
     
+#%% 2.比較兩種價格圖
+    filenames = ['PL-3001_YM_1_60_1_0.txt','PL-3001_YM_1_240_1_0.txt']    
+    dfs = []
+    for file in filenames :
+        df = parse_pl_file(file)
+        df = cal_profit(df,riskR=0.01)
+        dfs.append(df)
+    pnl = cal_portfolio_profit(dfs)
+    pnl.to_csv('portfolio-test-2.csv',header=None)
+#%% 3. 讀取資料夾底下(read all PL-*.txt )=> 測試四種價格圖
+    dfs = []
+    for file in os.listdir():
+        if file[-3:]=='txt' and file[:2]=='PL':
+            df = parse_pl_file(file)
+            df = cal_profit(df,riskR=0.01)
+            dfs.append(df)
     
-    
+    pnl_tot = cal_portfolio_profit(dfs)
+    pnl_tot.to_csv('portfolio-test-tot.csv',header=None)
 #%%
 
-# filename1 = 'PL-3001_YM_1_60_1_0.txt'
-# filename2 = 'PL-3001_YM_1_240_1_0.txt'
-# df1 = parse_pl_file(filename1)
-# df2 = parse_pl_file(filename2)
-# df1 = cal_profit(df1,riskR=0.01)
-# df2 = cal_profit(df2,riskR=0.01)
-# pnl = pd.DataFrame()
-# pnl['1'] = df1.open_pnl 
-# pnl['2'] = df2.open_pnl 
-# pnl['tot'] = (pnl['1']+pnl['2'])/2
-# # pnl = (df1.open_pnl + df2.open_pnl )/2
-# pnl.plot()
+    
+
