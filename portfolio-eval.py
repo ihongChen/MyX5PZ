@@ -91,12 +91,14 @@ def cal_profit(df,riskR=0.003):
     df['riskR'] = riskR
     return df
 
-def cal_portfolio_profit(dfs):
-    '''
+def cal_portfolio_profit(dfs,resetDays=365):
+    '''calculate portfolio equity 
 
     Parameters
     ----------
     dfs : list of dataframe 
+    resetDays: rebalance day
+    
         
 
     Returns
@@ -104,27 +106,47 @@ def cal_portfolio_profit(dfs):
     protfolio profit (with open pnl)
 
     '''
+    resetDays_ = str(resetDays)+'D'
     _idx = np.argmax([len(df) for df in dfs])
+        
     closed_pnl = pd.Series(0,index=dfs[_idx].index)
     open_pnl = closed_pnl.copy()
-    # closed_pnl = (dfs[0]['riskR']*dfs[0]['closed_pnl_byATR']).fillna(0)
-    # open_pnl = (dfs[0]['riskR']*dfs[0]['open_profit_byATR']).fillna(0)
-    for idx,df in enumerate(dfs):
-
-        closed_pnl += df['riskR']*df['closed_pnl_byATR'].fillna(0)
-        open_pnl += df['riskR']*df['open_profit_byATR'].fillna(0)
-    closed_pnl = closed_pnl.fillna(0)
-    open_pnl = open_pnl.fillna(0)
-    return (1+closed_pnl.cumsum() + open_pnl).ffill()
     
+    for idx,df in enumerate(dfs):
+        closed_pnl += df['riskR']*df['closed_pnl_byATR'].fillna(0)        
+        open_pnl += df['riskR']*df['open_profit_byATR'].fillna(0)
+    
+    closed_pnl.fillna(0,inplace=True)
+    open_pnl.fillna(0,inplace=True)
+    
+    ''' (rebalance) reset equity
+    '''
+    dates =  closed_pnl.resample(resetDays_).last().index
+    
+    c_pnl = pd.Series(0,index=closed_pnl.index)    
+    o_pnl = c_pnl.copy()
+    r = 1 
+    for sdate,edate in zip(dates,dates[1:]):
+        c_pnl[sdate:edate] = r*(1+closed_pnl[sdate:edate].cumsum())
+        o_pnl[sdate:edate] = r*open_pnl[sdate:edate]
+        r *= (1+closed_pnl[sdate:edate].cumsum().iloc[-1])
+        
+    c_pnl[edate:] = r*(1+closed_pnl[edate:].cumsum())
+    o_pnl[edate:] = r*open_pnl[edate:]
+    
+    return c_pnl+o_pnl
+
+#%%
+
 #%%1. 比較一種價格圖結果
 if __name__ == '__main__':
     
     filename = 'PL-3001_YM_1_60_1_0.txt'
     df = parse_pl_file(filename)
     df = cal_profit(df, riskR=0.01)
-    df.to_csv('portfolio-test.csv')
-    
+    pnl1 = cal_portfolio_profit([df])
+    # df.to_csv('portfolio-test-1.csv')
+    pnl1.to_csv('portfolio-test-1-r.csv')
 #%% 2.比較兩種價格圖
     filenames = ['PL-3001_YM_1_60_1_0.txt','PL-3001_YM_1_240_1_0.txt']    
     dfs = []
@@ -132,8 +154,8 @@ if __name__ == '__main__':
         df = parse_pl_file(file)
         df = cal_profit(df,riskR=0.01)
         dfs.append(df)
-    pnl = cal_portfolio_profit(dfs)
-    pnl.to_csv('portfolio-test-2.csv',header=None)
+    pnl2 = cal_portfolio_profit(dfs)
+    pnl2.to_csv('portfolio-test-2-r.csv',header=None)
 #%% 3. 讀取資料夾底下(read all PL-*.txt )=> 測試四種價格圖
     dfs = []
     for file in os.listdir():
@@ -143,7 +165,7 @@ if __name__ == '__main__':
             dfs.append(df)
     
     pnl_tot = cal_portfolio_profit(dfs)
-    pnl_tot.to_csv('portfolio-test-tot.csv',header=None)
+    pnl_tot.to_csv('portfolio-test-tot-r.csv',header=None)
 #%%
 
     
