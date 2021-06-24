@@ -4,27 +4,40 @@ Created on Wed Jun 16 06:22:17 2021
 
 @author: ehom4
 """
-#%%
+#%% module 
 import datetime 
 import pandas as pd 
 import os 
 import numpy as np 
 # import argparse
-# import ffn 
-#%%
+import ffn 
+#%% function
 def convert_jd(jd:str):
     '''轉換儒略日 '''
     if int(jd) == 0:
         return 
     try:
-        date = datetime.date(1899,12,29) + datetime.timedelta(days=int(jd))
+        date = datetime.date(1900,1,1) + datetime.timedelta(days=int(jd))
         return date 
     except OverflowError as e:
         return 
     
-def parse_pl_file(filename):
-    ''' 讀取x5績效表單(PL-*.txt)成資料表格式 (pd.dataframe)
+def parse_pl_file(filename:str):
     '''
+    讀取x5績效表單(PL-*.txt)成資料表格式 (pd.dataframe)
+
+    Parameters
+    ----------
+    filename : str
+        
+
+    Returns
+    -------
+    df : pd.DataFrame
+        
+
+    '''
+    
     data = {}
     with open(filename,encoding='cp950') as f: 
         for idx,line in enumerate(f):
@@ -97,7 +110,8 @@ def cal_portfolio_profit(dfs,resetDays=365):
     Parameters
     ----------
     dfs : list of dataframe 
-    resetDays: rebalance day
+    resetDays: rebalance day, 
+        : -1 = do not rebalance asset
     
         
 
@@ -105,68 +119,118 @@ def cal_portfolio_profit(dfs,resetDays=365):
     -------
     protfolio profit (with open pnl)
 
-    '''
-    resetDays_ = str(resetDays)+'D'
-    _idx = np.argmax([len(df) for df in dfs])
+    '''    
+    
+    
+    cl_r_atrs = [df['riskR']*df['closed_pnl_byATR'] for df in dfs]
+    closed_pnl = pd.concat(cl_r_atrs,axis=1).pipe(np.sum,axis=1)
+    ol_r_atrs = [df['riskR']*df['open_profit_byATR'] for df in dfs]
+    open_pnl = pd.concat(ol_r_atrs,axis=1).pipe(np.sum,axis=1)
+    
+    
+    
+    if resetDays != -1: 
+        resetDays_ = str(resetDays)+'D'
+        dates =  closed_pnl.resample(resetDays_).last().index
+    else:        
+        pass
+    
+    
         
-    closed_pnl = pd.Series(0,index=dfs[_idx].index)
-    open_pnl = closed_pnl.copy()
-    
-    for idx,df in enumerate(dfs):
-        closed_pnl += df['riskR']*df['closed_pnl_byATR'].fillna(0)        
-        open_pnl += df['riskR']*df['open_profit_byATR'].fillna(0)
-    
-    closed_pnl.fillna(0,inplace=True)
-    open_pnl.fillna(0,inplace=True)
     
     ''' (rebalance) reset equity
     '''
-    dates =  closed_pnl.resample(resetDays_).last().index
     
-    c_pnl = pd.Series(0,index=closed_pnl.index)    
+    
+    c_pnl = pd.Series(0.0,index=closed_pnl.index)    
     o_pnl = c_pnl.copy()
-    r = 1 
-    for sdate,edate in zip(dates,dates[1:]):
-        c_pnl[sdate:edate] = r*(1+closed_pnl[sdate:edate].cumsum())
-        o_pnl[sdate:edate] = r*open_pnl[sdate:edate]
-        r *= (1+closed_pnl[sdate:edate].cumsum().iloc[-1])
+    # dates = pd.to_datetime((closed_pnl.index)).resample(resetDays_).last().index
+    if resetDays != -1:
+        r = 1 
+        for sdate,edate in zip(dates,dates[1:]):
+            c_pnl[sdate:edate] = r*(1+closed_pnl[sdate:edate].cumsum())
+            o_pnl[sdate:edate] = r*open_pnl[sdate:edate]
+            r *= (1+closed_pnl[sdate:edate].cumsum().iloc[-1])
+            
+    
+        c_pnl[edate:] = r*(1+closed_pnl[edate:].cumsum())
+        o_pnl[edate:] = r*open_pnl[edate:]
         
-    c_pnl[edate:] = r*(1+closed_pnl[edate:].cumsum())
-    o_pnl[edate:] = r*open_pnl[edate:]
+    elif resetDays == -1:
+        c_pnl = (1+closed_pnl.cumsum())
+        o_pnl = open_pnl
+        
     
     return c_pnl+o_pnl
 
-#%%
+def cal_mar(pnl:pd.Series):
+    '''
+    calculate MAR value 
 
+    Parameters
+    ----------
+    pnl : pd.Series
+        profit and loss time series 
+
+    Returns
+    -------
+    dictionary 
+        key: cagr, mdd, mar
+
+    '''
+    cagr = ffn.core.calc_cagr(pnl)
+    mdd = ffn.core.calc_max_drawdown(pnl)
+    mar = cagr/abs(mdd)
+    return {'CAGR':cagr,'MDD':mdd,'MAR':mar}
 #%%1. 比較一種價格圖結果
 if __name__ == '__main__':
     
+    pl_directory = 'pl-data'
+    
+    if not os.path.exists(pl_directory):
+        os.makedirs(pl_directory )
+    
     filename = 'PL-3001_YM_1_60_1_0.txt'
+    filename = os.path.join(pl_directory,filename)    
     df = parse_pl_file(filename)
     df = cal_profit(df, riskR=0.01)
     pnl1 = cal_portfolio_profit([df])
     # df.to_csv('portfolio-test-1.csv')
-    pnl1.to_csv('portfolio-test-1-r.csv')
+    # pnl1.to_csv('portfolio-test-1-r.csv')
 #%% 2.比較兩種價格圖
     filenames = ['PL-3001_YM_1_60_1_0.txt','PL-3001_YM_1_240_1_0.txt']    
     dfs = []
     for file in filenames :
+        file = os.path.join(pl_directory,file)
         df = parse_pl_file(file)
         df = cal_profit(df,riskR=0.01)
         dfs.append(df)
     pnl2 = cal_portfolio_profit(dfs)
-    pnl2.to_csv('portfolio-test-2-r.csv',header=None)
+    # pnl2.to_csv('portfolio-test-2-r.csv',header=None)
 #%% 3. 讀取資料夾底下(read all PL-*.txt )=> 測試四種價格圖
     dfs = []
-    for file in os.listdir():
+    charts = []
+    for file in os.listdir(pl_directory):
         if file[-3:]=='txt' and file[:2]=='PL':
+            charts.append(file)
+            file = os.path.join(pl_directory,file)
             df = parse_pl_file(file)
             df = cal_profit(df,riskR=0.01)
             dfs.append(df)
+            
+    pnl_tot = cal_portfolio_profit(dfs,resetDays=365)
+    pnl_tot_no_reset= cal_portfolio_profit(dfs,resetDays=-1)
     
-    pnl_tot = cal_portfolio_profit(dfs)
-    pnl_tot.to_csv('portfolio-test-tot-r.csv',header=None)
-#%%
+    result = pd.concat([df.open_pnl for df in dfs],axis=1)
+    result.columns = charts
+    corr = result.corr()
+    
+    # pnl_tot.to_csv('portfolio-test-tot-r.csv',header=None)
 
+#%% Plot correlation heatmap & equity curve
+
+    import seaborn as sns 
+    sns.heatmap(corr)
+    # result['pnl_total'] = pnl_tot_no_reset
     
 
